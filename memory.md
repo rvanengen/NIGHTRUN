@@ -13,6 +13,8 @@ catalog, or installer workflow.
 4. Select or offer LLMs according to the target machine's available memory.
 5. Determine how NightRun can work on Apple Silicon computers.
 6. Maintain the enhanced project at `https://github.com/rvanengen/NIGHTRUN`.
+7. Keep the README synchronized with the implemented project state and define
+   a safe process for adding, disabling, and removing catalog models.
 
 ## Current implemented state
 
@@ -50,6 +52,8 @@ catalog, or installer workflow.
 - The largest compatible catalog image is marked as the memory-tier choice.
 - Future supported models automatically participate through the manifest's
   `min_ram_gb`, `targets`, and size fields.
+- Each manifest entry supports `enabled = yes|no`; disabling preserves its
+  pins and metadata while removing it from installer choices.
 - Supported architecture families remain Llama, Qwen3, and dense Granite.
   Adding an unrelated GGUF architecture requires inference-engine work and
   reference validation, not merely another manifest entry.

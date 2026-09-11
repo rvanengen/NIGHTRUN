@@ -63,6 +63,8 @@ The single source of truth for the catalog. Format: `model.<id>.<key> =
 value`, one per line, `#` comments; the file is parsed as data and never
 executed. Keys per model: `name family quant repo file revision sha256
 size_bytes license gated min_ram_gb targets nrm_bytes min_media_gb blurb`.
+The optional `enabled` key accepts `yes` or `no` and defaults to `yes` for
+backward compatibility.
 
 - `revision` is a Hugging Face **repo commit**; downloads resolve
   `/resolve/<revision>/<file>`, so a moved branch cannot change what
@@ -79,6 +81,12 @@ the sha256 (`x-linked-etag`, or sha256sum after a manual download), and
 run `scripts/installer/tests/run.sh` (it validates required fields).
 The family must be one NightRun supports (llama, qwen3, dense granite);
 `nrconvert --inspect` is the gatekeeper at run time regardless.
+
+**Disabling or removing a model:** set `model.<id>.enabled = no` to keep its
+verified metadata in version control while removing it from installer choices.
+Delete every `model.<id>.*` line only when the entry should be forgotten
+permanently. Cached GGUF and NRM files are separate local artifacts and are not
+deleted automatically.
 
 Each additional compatible catalog entry automatically participates in the
 RAM filter and best-fit recommendation through its `min_ram_gb` value. This

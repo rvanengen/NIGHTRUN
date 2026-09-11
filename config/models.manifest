@@ -12,6 +12,7 @@
 manifest.version = 1
 
 model.llama-1b.name           = Llama 3.2 1B Instruct
+model.llama-1b.enabled        = yes
 model.llama-1b.family         = llama3
 model.llama-1b.quant          = Q8_0
 model.llama-1b.repo           = bartowski/Llama-3.2-1B-Instruct-GGUF
@@ -28,6 +29,7 @@ model.llama-1b.min_media_gb   = 4
 model.llama-1b.blurb          = Compact and fast - the lowest memory requirement
 
 model.llama-3b.name           = Llama 3.2 3B Instruct
+model.llama-3b.enabled        = yes
 model.llama-3b.family         = llama3
 model.llama-3b.quant          = Q4_K_M
 model.llama-3b.repo           = bartowski/Llama-3.2-3B-Instruct-GGUF
@@ -44,6 +46,7 @@ model.llama-3b.min_media_gb   = 4
 model.llama-3b.blurb          = The larger Llama - stronger answers, still nimble
 
 model.granite-3b.name         = Granite 4.1 3B
+model.granite-3b.enabled      = yes
 model.granite-3b.family       = granite
 model.granite-3b.quant        = Q4_K_M
 model.granite-3b.repo         = ibm-granite/granite-4.1-3b-GGUF
@@ -60,6 +63,7 @@ model.granite-3b.min_media_gb = 4
 model.granite-3b.blurb        = Dense transformer - the recommended Raspberry Pi 5 model
 
 model.qwen3-4b.name           = Qwen3 4B Instruct 2507
+model.qwen3-4b.enabled        = yes
 model.qwen3-4b.family         = qwen3
 model.qwen3-4b.quant          = Q4_K_M
 model.qwen3-4b.repo           = unsloth/Qwen3-4B-Instruct-2507-GGUF

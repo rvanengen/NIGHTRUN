@@ -17,7 +17,8 @@ This is weird software. It boots straight into an LLM.
 There is no Linux userspace hiding underneath. Your machine's firmware starts NightRun
 directly, NightRun copies a quantized model into RAM, draws its own terminal on the
 framebuffer, and you chat. No kernel, no browser, no host process. The default build is
-offline; an experimental, opt-in network stack is available for firmware-network work.
+offline. Experimental network-only and network-plus-MCP builds are available when the
+machine is intentionally connected to a trusted gateway.
 
 Written in Rust. `no_std` where it counts. Runs on ordinary x86_64 PCs from a USB stick
 and on a Raspberry Pi 5 from an SD card.
@@ -29,7 +30,8 @@ and on a Raspberry Pi 5 from an SD card.
 3. Firmware starts NightRun. No OS loads, because there is no OS on the media.
 4. The model (1.3 to 2.4 GB) streams into RAM with checksums verified during the read.
 5. Storage is sealed. Any later disk read is a hard fault, on purpose.
-6. You get a chat prompt. The model answers on your CPU, offline, forever.
+6. You get a chat prompt. The model answers locally on your CPU. Offline is the default;
+   optional networking and MCP are explicit build choices.
 
 ## Quick start
 
@@ -51,6 +53,20 @@ memory-compatible model selection, optional network/MCP checkboxes, a verified d
 
 You need Linux, Rust (stable + nightly), QEMU if you want to test without hardware, and
 about 6 GB of free disk for a model plus the image.
+
+### Choose a connectivity mode
+
+The installer shows checkbox-style controls and records the selected mode in the image
+build. Both optional stacks default to off.
+
+| Mode | Installer state | Manual flag | Contents |
+|---|---|---|---|
+| Offline | Network `[ ]`, MCP `[ ]` | no flag | No NIC, packet stack, or MCP application code |
+| Network only | Network `[x]`, MCP `[ ]` | `--network` | Ethernet, ARP, IPv4, ICMP and UDP |
+| Network + MCP | Network `[x]`, MCP `[x]` | `--mcp` | Packet stack plus bidirectional MCP through the host gateway |
+
+MCP implies networking. Unchecking networking also unchecks MCP. The standard build
+remains offline and does not require a gateway.
 
 ## Screenshots
 
@@ -127,6 +143,58 @@ dtype preserved, so Q8_0, Q4_K_M, Q4_K_S and Q6_K builds of these families all w
 This is not "arbitrary GGUF support": a new architecture family needs engine work and
 reference validation, and the converter will tell you so.
 
+### Add, disable, or remove catalog models
+
+[`config/models.manifest`](config/models.manifest) is the single source of truth for the
+installer's available models. The installer does not contain a second hard-coded list.
+Every enabled entry is filtered by target and `min_ram_gb`, so a newly added compatible
+model automatically appears only when the selected machine has enough RAM.
+
+To add a model, first confirm that `nrconvert --inspect` accepts its GGUF architecture
+and tensor types. Then append a uniquely named block to the manifest:
+
+```ini
+model.example-3b.name           = Example 3B Instruct
+model.example-3b.enabled        = yes
+model.example-3b.family         = llama3
+model.example-3b.quant          = Q4_K_M
+model.example-3b.repo           = owner/repository
+model.example-3b.file           = exact-file-name.gguf
+model.example-3b.revision       = full-pinned-repository-commit
+model.example-3b.sha256         = full-64-character-artifact-sha256
+model.example-3b.size_bytes     = exact-download-size
+model.example-3b.license        = exact model license
+model.example-3b.gated          = no
+model.example-3b.min_ram_gb     = 6
+model.example-3b.targets        = x86_64,rpi5
+model.example-3b.nrm_bytes      = measured-converted-size
+model.example-3b.min_media_gb   = 4
+model.example-3b.blurb          = Short installer description
+```
+
+Never use `main` or another moving branch name as `revision`; pin the repository commit
+and verify the downloaded artifact's SHA-256 and exact byte size. A catalog entry is a
+supply-chain promise, not just a download shortcut.
+
+There are two removal levels:
+
+- Set `model.<id>.enabled = no` to hide a model from the installer while preserving its
+  pinned metadata for easy restoration and audit history.
+- Delete every `model.<id>.*` line to remove it permanently from the catalog. Cached
+  `.gguf` and `.nrm` files are local build artifacts and are deliberately not deleted.
+
+After any catalog edit, run:
+
+```sh
+scripts/installer/tests/run.sh
+cargo run --release -p nrconvert -- --inspect path/to/model.gguf
+```
+
+The first command validates the manifest and installer behavior on Linux with Bash 4+;
+the second validates the actual model. Adding a model from a new family still requires
+engine, tokenizer/template, kernel, conversion, and llama.cpp parity work. See the
+[installer documentation](docs/installer.md) for pinning and validation details.
+
 ## Architecture
 
 ```
@@ -139,6 +207,7 @@ firmware (UEFI)
   -> tokenizer + chat template (per family)
   -> batched prefill -> decode loop -> sampling
   -> framebuffer chat UI with live stats
+  -> optional SNP NIC -> nr-net -> optional nr-mcp -> trusted host gateway
 ```
 
 Some choices worth explaining:
@@ -203,7 +272,7 @@ cargo run --release -p nrconvert -- \
 # 3. Build a bootable image
 cargo xtask image --model models/model.nrm        # x86_64 -> nightrun.img
 cargo xtask pi-image --model models/model.nrm     # Pi 5   -> nightrun-pi5.img
-# Add --network for the UDP stack alone, or --mcp for network + MCP.
+# Add --network for the packet stack alone, or --mcp for network + MCP.
 #    (the Pi image needs firmware built once from pinned source:
 #     scripts/build-rpi5-firmware.sh; see docs/rpi5-uefi.md)
 
@@ -268,7 +337,11 @@ QEMU boots for both architectures, and the Pi 5 bring-up on a real D0 board.
 
 Still open: broad real-hardware coverage on x86 machines (firmware quirks vary), Pi 5
 sustained-thermal measurements, faster NEON dot kernels on the Pi (implemented, awaiting
-board re-benchmarks), and C1-stepping Pi boards (tooling ready, untested on our hardware).
+board re-benchmarks), C1-stepping Pi boards (tooling ready, untested on our hardware),
+DHCP and boot-time network configuration, cryptographic protection for the device UDP
+link, and native Apple Silicon boot. Native ARM64 macOS host inference is supported;
+see [Apple Silicon](docs/apple-silicon.md). The durable feature history and enhancement
+backlog live in [memory.md](memory.md).
 
 ## Built with a coding agent
 

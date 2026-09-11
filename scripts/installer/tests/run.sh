@@ -74,6 +74,15 @@ t "diskpath: mmcblk0 shape accepted" bash -c '
 t "manifest: loads" nr_manifest_load "$NR_MANIFEST"
 t "manifest: four models" eq "${#NR_MODEL_IDS[@]}" 4
 t "manifest: llama sha present" eq "${NR_MF[llama-1b.sha256]:0:8}" "432f310a"
+t "manifest: enabled model visible" nr_model_enabled llama-1b
+t "manifest: missing enabled defaults yes" bash -c '
+    source "'"$LIB"'/safety.sh" >/dev/null 2>&1
+    source "'"$LIB"'/ui.sh"; source "'"$LIB"'/models.sh"
+    NR_MF[x.enabled]=""; nr_model_enabled x'
+t "manifest: disabled model hidden" bash -c '
+    source "'"$LIB"'/safety.sh" >/dev/null 2>&1
+    source "'"$LIB"'/ui.sh"; source "'"$LIB"'/models.sh"
+    NR_MF[x.enabled]=no; ! nr_model_enabled x'
 t "manifest: malformed line tolerated" bash -c '
     source "'"$LIB"'/safety.sh" >/dev/null 2>&1
     source "'"$LIB"'/ui.sh"; source "'"$LIB"'/models.sh"

@@ -57,8 +57,21 @@ nr_manifest_load() {
                 return 1
             }
         done
+        case "${NR_MF[$mid.enabled]:-yes}" in
+            yes | no) ;;
+            *)
+                nr_error "manifest: model '$mid' has invalid enabled='${NR_MF[$mid.enabled]}' (use yes or no)"
+                return 1
+                ;;
+        esac
     done
     return 0
+}
+
+# Missing `enabled` preserves compatibility with older manifests. A disabled
+# entry retains its pins and metadata but is absent from installer choices.
+nr_model_enabled() {
+    [[ "${NR_MF[$1.enabled]:-yes}" == "yes" ]]
 }
 
 # Does model $1 support target $2? Target tokens in the manifest may carry
@@ -130,6 +143,7 @@ nr_select_target_memory() {
 nr_recommended_model() {
     local target="$1" ram_gb="$2" mid need bytes best="" best_ram=-1 best_bytes=-1
     for mid in "${NR_MODEL_IDS[@]}"; do
+        nr_model_enabled "$mid" || continue
         nr_model_supports "$mid" "$target" || continue
         nr_model_fits_memory "$mid" "$ram_gb" || continue
         need="${NR_MF[$mid.min_ram_gb]}"
@@ -146,6 +160,7 @@ nr_recommended_model() {
 nr_select_model() {
     local choices=() excluded=() mid
     for mid in "${NR_MODEL_IDS[@]}"; do
+        nr_model_enabled "$mid" || continue
         if nr_model_supports "$mid" "$NR_TARGET"; then
             if nr_model_fits_memory "$mid" "$NR_TARGET_RAM_GB"; then
                 choices+=("$mid")
