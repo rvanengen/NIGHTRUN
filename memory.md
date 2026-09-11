@@ -5,6 +5,8 @@ and the constraints that future enhancements should preserve. Update it when a
 feature changes the architecture, supported platforms, security boundary, model
 catalog, or installer workflow.
 
+Last updated: 2026-09-11
+
 ## What was requested
 
 1. Add a network stack to NightRun.
@@ -125,3 +127,29 @@ At the time this memory was created:
 - Primary repository: `https://github.com/rvanengen/NIGHTRUN`
 - Primary branch: `main`
 - Original upstream: `https://github.com/hardrave/NIGHTRUN`
+
+## Enhancement log
+
+### 2026-09-11 — README and model catalog lifecycle
+
+- Updated the README to reflect the implemented offline, network-only, and
+  network-plus-MCP modes, memory-aware selection, gateway security boundary,
+  and Apple Silicon status.
+- Established `config/models.manifest` as the only installer catalog source;
+  model choices must not be duplicated in installer code.
+- Added the optional `model.<id>.enabled = yes|no` field. Missing values default
+  to `yes` for compatibility with older manifests.
+- Chose `enabled = no` as the reversible removal mechanism so verified revision,
+  checksum, licensing, target, and RAM metadata remain available for audit and
+  restoration.
+- Permanent removal means deleting every `model.<id>.*` line. It does not
+  automatically delete local GGUF or NRM artifacts.
+- New entries must use a pinned repository commit, exact SHA-256 and byte sizes,
+  an explicit license, supported targets, and a measured minimum RAM value.
+- New entries in supported families automatically inherit target/RAM filtering.
+  New architecture families still require engine, tokenizer/template,
+  conversion, kernel, and reference-parity work.
+- Validation for this update: Rust workspace tests passed; all five MCP gateway
+  integration tests passed with loopback enabled; installer scripts passed Bash
+  syntax validation. The Linux-only installer harness remains a Linux CI/host
+  validation step.
