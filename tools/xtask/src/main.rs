@@ -4,6 +4,8 @@
 //!   cargo xtask build                       build BOOTX64.EFI and stage the ESP dir
 //!   cargo xtask run [opts]                  boot the staged ESP in QEMU + OVMF
 //!     --window            show a display window (default: headless)
+//!     --network           enable Ethernet/ARP/IPv4/ICMP/UDP only
+//!     --mcp               enable networking and the MCP bridge
 //!     --mem <size>        guest RAM (default 2G)
 //!     --secs <n>          quit QEMU after n seconds
 //!     --shot <t>:<path>   screendump PNG at t seconds (repeatable)
@@ -21,14 +23,14 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("build") => {
-            build_and_stage(arch_flag(&args));
+            build_and_stage(arch_flag(&args), stack_mode(&args));
         }
         Some("image") => {
             let model = args
                 .iter()
                 .position(|a| a == "--model")
                 .map(|i| args[i + 1].clone());
-            build_image(true, model.as_deref(), arch_flag(&args));
+            build_image(true, model.as_deref(), arch_flag(&args), stack_mode(&args));
         }
         Some("run") => run(parse_run_opts(&args[1..])),
         Some("bench") => bench(),
@@ -37,7 +39,7 @@ fn main() {
                 .iter()
                 .position(|a| a == "--model")
                 .map(|i| args[i + 1].clone());
-            pi_image(model.as_deref());
+            pi_image(model.as_deref(), stack_mode(&args));
         }
         _ => {
             eprintln!("usage: cargo xtask <build|image|run|bench|pi-image> [options]");
@@ -122,9 +124,9 @@ fn bench() {
 /// Build nightrun.img with the given model (default models/model.nrm).
 /// When `fresh` is false and the image already contains this exact model,
 /// only BOOTX64.EFI is refreshed.
-fn build_image(fresh: bool, model_arg: Option<&str>, arch: Arch) -> PathBuf {
+fn build_image(fresh: bool, model_arg: Option<&str>, arch: Arch, mode: StackMode) -> PathBuf {
     let root = root();
-    let (_, efi) = build_and_stage(arch);
+    let (_, efi) = build_and_stage(arch, mode);
     let img = root.join(match arch {
         Arch::X86 => "nightrun.img",
         Arch::Aarch64 => "nightrun-aarch64.img",
@@ -147,7 +149,8 @@ fn build_image(fresh: bool, model_arg: Option<&str>, arch: Arch) -> PathBuf {
             let sz = std::fs::metadata(m).map(|md| md.len()).unwrap_or(0);
             format!("{}|{sz}", m.display())
         })
-        .unwrap_or_default();
+        .unwrap_or_default()
+        + mode.stamp();
     let same_model = std::fs::read_to_string(&sidecar)
         .map(|s| s == stamp)
         .unwrap_or(false);
@@ -164,9 +167,9 @@ fn build_image(fresh: bool, model_arg: Option<&str>, arch: Arch) -> PathBuf {
 /// Build the flashable Raspberry Pi 5 SD image (MBR + FAT32: firmware
 /// payload, BOOTAA64.EFI, model). Default model: Granite 3B (fits the
 /// 4 GB board; Qwen3 4B needs 8 GB+).
-fn pi_image(model_arg: Option<&str>) {
+fn pi_image(model_arg: Option<&str>, mode: StackMode) {
     let root = root();
-    let (_, efi) = build_and_stage(Arch::Aarch64);
+    let (_, efi) = build_and_stage(Arch::Aarch64, mode);
     let model = root.join(model_arg.unwrap_or("models/granite-4.1-3b-q4km.nrm"));
     let model = model.exists().then_some(model);
     if model.is_none() {
@@ -189,6 +192,16 @@ fn arch_flag(args: &[String]) -> Arch {
         .unwrap_or_default()
 }
 
+fn stack_mode(args: &[String]) -> StackMode {
+    if args.iter().any(|arg| arg == "--mcp") {
+        StackMode::Mcp
+    } else if args.iter().any(|arg| arg == "--network") {
+        StackMode::Network
+    } else {
+        StackMode::Offline
+    }
+}
+
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
@@ -196,27 +209,29 @@ fn root() -> PathBuf {
         .unwrap()
 }
 
-fn build_and_stage(arch: Arch) -> (PathBuf, PathBuf) {
+fn build_and_stage(arch: Arch, mode: StackMode) -> (PathBuf, PathBuf) {
     let root = root();
     let efi = match arch {
         Arch::X86 => {
             // Custom hard-float UEFI target (the builtin one is soft-float,
             // which both breaks AVX intrinsics and would cripple f32 math),
             // so build core/alloc from source on nightly.
-            let status = Command::new("cargo")
-                .current_dir(&root)
-                .env_remove("CARGO") // don't let the outer stable cargo leak in
-                .args([
-                    "+nightly",
-                    "build",
-                    "--release",
-                    "-p",
-                    "nr-boot",
-                    "-Zbuild-std=core,alloc",
-                    "-Zjson-target-spec",
-                    "--target",
-                    "x86_64-nightrun-uefi.json",
-                ])
+            let mut command = Command::new("cargo");
+            command.current_dir(&root).env_remove("CARGO").args([
+                "+nightly",
+                "build",
+                "--release",
+                "-p",
+                "nr-boot",
+                "-Zbuild-std=core,alloc",
+                "-Zjson-target-spec",
+                "--target",
+                "x86_64-nightrun-uefi.json",
+            ]);
+            if let Some(feature) = mode.cargo_feature() {
+                command.args(["--features", feature]);
+            }
+            let status = command
                 .status()
                 .expect("run cargo (is nightly installed? rustup toolchain install nightly --component rust-src)");
             assert!(status.success(), "nr-boot build failed");
@@ -225,16 +240,19 @@ fn build_and_stage(arch: Arch) -> (PathBuf, PathBuf) {
         Arch::Aarch64 => {
             // Stock tier-2 target: hard-float + NEON baseline, stable
             // toolchain, no build-std.
-            let status = Command::new("cargo")
-                .current_dir(&root)
-                .args([
-                    "build",
-                    "--release",
-                    "-p",
-                    "nr-boot",
-                    "--target",
-                    "aarch64-unknown-uefi",
-                ])
+            let mut command = Command::new("cargo");
+            command.current_dir(&root).args([
+                "build",
+                "--release",
+                "-p",
+                "nr-boot",
+                "--target",
+                "aarch64-unknown-uefi",
+            ]);
+            if let Some(feature) = mode.cargo_feature() {
+                command.args(["--features", feature]);
+            }
+            let status = command
                 .status()
                 .expect("run cargo (rustup target add aarch64-unknown-uefi)");
             assert!(status.success(), "nr-boot aarch64 build failed");
@@ -280,11 +298,42 @@ impl Arch {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Default)]
+enum StackMode {
+    #[default]
+    Offline,
+    Network,
+    Mcp,
+}
+
+impl StackMode {
+    fn cargo_feature(self) -> Option<&'static str> {
+        match self {
+            Self::Offline => None,
+            Self::Network => Some("network"),
+            Self::Mcp => Some("mcp"),
+        }
+    }
+
+    fn stamp(self) -> &'static str {
+        match self {
+            Self::Offline => "|offline",
+            Self::Network => "|network",
+            Self::Mcp => "|network+mcp",
+        }
+    }
+
+    fn has_network(self) -> bool {
+        !matches!(self, Self::Offline)
+    }
+}
+
 #[derive(Default)]
 struct RunOpts {
     arch: Arch,
     window: bool,
     img: bool,
+    mode: StackMode,
     model: Option<String>,
     mem: Option<String>,
     smp: Option<String>,
@@ -302,6 +351,12 @@ fn parse_run_opts(args: &[String]) -> RunOpts {
             "--arch" => o.arch = Arch::parse(&val()),
             "--window" => o.window = true,
             "--img" => o.img = true,
+            "--network" => {
+                if o.mode == StackMode::Offline {
+                    o.mode = StackMode::Network;
+                }
+            }
+            "--mcp" => o.mode = StackMode::Mcp,
             "--model" => o.model = Some(val()),
             "--mem" => o.mem = Some(val()),
             "--smp" => o.smp = Some(val()),
@@ -328,10 +383,10 @@ fn run(opts: RunOpts) {
     // exceeds QEMU's virtual-FAT limits); the default boots the staged ESP
     // directory for a fast dev loop.
     let boot_drive = if opts.img {
-        let img = build_image(false, opts.model.as_deref(), opts.arch);
+        let img = build_image(false, opts.model.as_deref(), opts.arch, opts.mode);
         format!("format=raw,file={}", img.display())
     } else {
-        let (esp, _) = build_and_stage(opts.arch);
+        let (esp, _) = build_and_stage(opts.arch, opts.mode);
         format!("format=raw,file=fat:rw:{}", esp.display())
     };
     let target = root.join("target");
@@ -395,6 +450,17 @@ fn run(opts: RunOpts) {
                 .args(["-device", "qemu-xhci", "-device", "usb-kbd"])
                 .args(["-drive", &format!("if=none,id=boot,{boot_drive}")])
                 .args(["-device", "virtio-blk-pci,drive=boot"]);
+        }
+    }
+    if opts.mode.has_network() {
+        cmd.args(["-netdev", "user,id=nightrun"]);
+        match opts.arch {
+            Arch::X86 => {
+                cmd.args(["-device", "e1000,netdev=nightrun"]);
+            }
+            Arch::Aarch64 => {
+                cmd.args(["-device", "virtio-net-pci,netdev=nightrun"]);
+            }
         }
     }
     cmd.args(["-serial", &format!("file:{}", serial_log.display())])

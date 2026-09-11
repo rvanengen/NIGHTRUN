@@ -86,23 +86,97 @@ nr_model_target_note() {
     return 0
 }
 
-nr_select_model() {
-    local choices=() mid
-    for mid in "${NR_MODEL_IDS[@]}"; do
-        nr_model_supports "$mid" "$NR_TARGET" && choices+=("$mid")
+nr_model_fits_memory() {
+    local mid="$1" ram_gb="$2" need
+    [[ "$ram_gb" =~ ^[0-9]+$ ]] || return 1
+    need="${NR_MF[$mid.min_ram_gb]}"
+    (( need <= ram_gb ))
+}
+
+nr_detect_host_ram_gb() {
+    local kb
+    kb="$(sed -n 's/^MemTotal:[[:space:]]*\([0-9]*\).*/\1/p' /proc/meminfo 2>/dev/null)"
+    [[ "$kb" =~ ^[0-9]+$ ]] || return 1
+    printf '%s' "$(( (kb + 1048575) / 1048576 ))"
+}
+
+nr_select_target_memory() {
+    local suggested detected
+    if [[ "$NR_TARGET" == "rpi5" ]]; then
+        suggested=8
+    else
+        detected="$(nr_detect_host_ram_gb || true)"
+        suggested="${detected:-8}"
+    fi
+    while :; do
+        nr_section "TARGET MEMORY"
+        nr_note "This is the RAM in the machine that will boot NightRun, not disk space."
+        [[ -n "${detected:-}" ]] && nr_kv "Detected here" "${detected} GB"
+        nr_ask "Target RAM in GB [${suggested}] (B to go back):"
+        [[ -z "$REPLY" ]] && REPLY="$suggested"
+        case "$REPLY" in
+            [bB]) return 1 ;;
+            *)
+                if [[ "$REPLY" =~ ^[0-9]+$ ]] && (( REPLY >= 2 && REPLY <= 1024 )); then
+                    NR_TARGET_RAM_GB="$REPLY"
+                    return 0
+                fi
+                nr_warn "Enter a whole number from 2 to 1024."
+                ;;
+        esac
     done
+}
+
+nr_recommended_model() {
+    local target="$1" ram_gb="$2" mid need bytes best="" best_ram=-1 best_bytes=-1
+    for mid in "${NR_MODEL_IDS[@]}"; do
+        nr_model_supports "$mid" "$target" || continue
+        nr_model_fits_memory "$mid" "$ram_gb" || continue
+        need="${NR_MF[$mid.min_ram_gb]}"
+        bytes="${NR_MF[$mid.nrm_bytes]}"
+        if (( need > best_ram )) || (( need == best_ram && bytes > best_bytes )); then
+            best="$mid"
+            best_ram="$need"
+            best_bytes="$bytes"
+        fi
+    done
+    printf '%s' "$best"
+}
+
+nr_select_model() {
+    local choices=() excluded=() mid
+    for mid in "${NR_MODEL_IDS[@]}"; do
+        if nr_model_supports "$mid" "$NR_TARGET"; then
+            if nr_model_fits_memory "$mid" "$NR_TARGET_RAM_GB"; then
+                choices+=("$mid")
+            else
+                excluded+=("$mid")
+            fi
+        fi
+    done
+    local recommended
+    recommended="$(nr_recommended_model "$NR_TARGET" "$NR_TARGET_RAM_GB")"
 
     while :; do
         nr_section "SELECT MODEL"
+        nr_kv "Target RAM" "${NR_TARGET_RAM_GB} GB"
         local i=1 note extra
         for mid in "${choices[@]}"; do
             note="$(nr_model_target_note "$mid" "$NR_TARGET")"
             extra="requires ~${NR_MF[$mid.min_ram_gb]} GB RAM"
             [[ "$note" == "8gb" ]] && extra+=" · needs an 8 GB Raspberry Pi 5"
+            [[ "$mid" == "$recommended" ]] && extra+=" · recommended best fit"
             nr_item "$i" "${NR_MF[$mid.name]} — ${NR_MF[$mid.quant]}" \
                     "${NR_MF[$mid.blurb]:-} · $extra"
             (( i++ ))
         done
+        if (( ${#excluded[@]} )); then
+            local hidden=""
+            for mid in "${excluded[@]}"; do
+                hidden+="${NR_MF[$mid.name]} (${NR_MF[$mid.min_ram_gb]} GB), "
+            done
+            nr_note "Hidden for insufficient RAM: ${hidden%, }"
+        fi
         nr_item "$i" "Use a local GGUF file" "Bring your own model — it will be inspected before use."
         nr_item "B" "Back"
         nr_item "Q" "Quit"
@@ -135,6 +209,7 @@ nr_show_model_card() {
     nr_kv "Quantization"  "${NR_MF[$mid.quant]}"
     nr_kv "Provider"      "${NR_MF[$mid.repo]} (${NR_MF[$mid.license]})"
     nr_kv "Required RAM"  "${NR_MF[$mid.min_ram_gb]} GB on the target machine"
+    nr_kv "Available RAM" "${NR_TARGET_RAM_GB} GB selected"
     nr_kv "Disk required" "$(nr_human_bytes "${NR_MF[$mid.size_bytes]}") download + $(nr_human_bytes "${NR_MF[$mid.nrm_bytes]}") converted"
     nr_kv "Target"        "$NR_TARGET_LABEL"
 }

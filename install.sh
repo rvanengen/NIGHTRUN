@@ -24,6 +24,8 @@ source "$NR_LIB/preflight.sh"
 source "$NR_LIB/targets.sh"
 # shellcheck source=scripts/installer/lib/models.sh
 source "$NR_LIB/models.sh"
+# shellcheck source=scripts/installer/lib/features.sh
+source "$NR_LIB/features.sh"
 # shellcheck source=scripts/installer/lib/downloads.sh
 source "$NR_LIB/downloads.sh"
 # shellcheck source=scripts/installer/lib/build.sh
@@ -53,10 +55,12 @@ main() {
     nr_preflight
     nr_manifest_load "$NR_MANIFEST" || exit "$EXIT_PREFLIGHT"
 
-    # Target → model (with Back support between the two).
+    # Target → target RAM → model → optional stacks.
     while :; do
         nr_select_target
-        nr_select_model && break
+        nr_select_target_memory || continue
+        nr_select_model || continue
+        nr_select_features && break
     done
 
     # Acquire the GGUF (catalog models only; local files arrive validated).

@@ -28,7 +28,10 @@ media, flash, verify, safety) + `config/models.manifest` +
 
 ## Targets
 
-The first choice selects genuinely different images:
+The first choice selects genuinely different images. The next screen records
+the target machine's RAM; models that cannot fit are hidden with an explicit
+reason, and the largest compatible catalog model is marked as the recommended
+best fit:
 
 - **x86_64 UEFI** -> `cargo xtask image` -> GPT disk with a FAT32 ESP,
   `EFI/BOOT/BOOTX64.EFI`, `model.nrm`. Boots from USB on UEFI PCs.
@@ -40,6 +43,19 @@ The first choice selects genuinely different images:
 One image is never silently used for the other target. Selecting Pi 5
 without the firmware payload present offers to run
 `scripts/build-rpi5-firmware.sh` (and explains its dependencies).
+
+## Optional stacks
+
+Before building, a checkbox-style screen controls two independent layers:
+
+- `[ ] Network stack`: Ethernet, ARP, IPv4, ICMP and UDP.
+- `[ ] MCP bridge`: bidirectional MCP/JSON-RPC through the authenticated host
+  gateway. MCP depends on networking, so checking it also checks networking;
+  unchecking networking disables both.
+
+Both default off. The installer passes `--network` for the packet stack alone
+or `--mcp` for network plus MCP. The IMAGE READY card records the selected
+mode, so an offline image is never presented as a network-enabled one.
 
 ## The model manifest (`config/models.manifest`)
 
@@ -53,9 +69,9 @@ size_bytes license gated min_ram_gb targets nrm_bytes min_media_gb blurb`.
   users receive.
 - `sha256` is the artifact digest; current pins were computed locally
   and cross-checked against HF's `X-Linked-ETag` LFS hash.
-- `targets` filters the catalog per selected target; a qualifier like
-  `rpi5-8gb` keeps the entry listed with an explicit "needs an 8 GB
-  board" note rather than hiding it.
+- `targets` filters the catalog per selected target; `min_ram_gb` then filters
+  against the RAM entered for the target. A qualifier like `rpi5-8gb` is also
+  surfaced in the model description.
 
 **Adding a model:** append a block with a new id, pin the revision
 (`curl -sI .../resolve/main/file.gguf | grep -i x-repo-commit`), record
@@ -63,6 +79,11 @@ the sha256 (`x-linked-etag`, or sha256sum after a manual download), and
 run `scripts/installer/tests/run.sh` (it validates required fields).
 The family must be one NightRun supports (llama, qwen3, dense granite);
 `nrconvert --inspect` is the gatekeeper at run time regardless.
+
+Each additional compatible catalog entry automatically participates in the
+RAM filter and best-fit recommendation through its `min_ram_gb` value. This
+allows the catalog to grow without pretending arbitrary GGUF architectures are
+supported.
 
 ## Downloads and verification
 
@@ -147,7 +168,7 @@ script never stays root.
 
 ## Testing
 
-- `scripts/installer/tests/run.sh`: 47 checks, no root, and no contact
+- `scripts/installer/tests/run.sh`: no root, and no contact
   with real block devices: the media engine runs on fixtures
   (`tests/fixtures/lsblk-*.txt`) covering single/multiple USB, SD+USB,
   mounted targets, no-media, root-only hosts (SATA and NVMe),

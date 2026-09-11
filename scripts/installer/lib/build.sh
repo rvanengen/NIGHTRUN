@@ -58,6 +58,11 @@ nr_build_image() {
         image="$NR_ROOT/nightrun.img"
         nr_note "Assembling the x86_64 UEFI image (GPT/ESP + BOOTX64.EFI + model)..."
     fi
+    if (( NR_ENABLE_MCP )); then
+        xtask_cmd+=(--mcp)
+    elif (( NR_ENABLE_NETWORK )); then
+        xtask_cmd+=(--network)
+    fi
     if ! (cd "$NR_ROOT" && "${xtask_cmd[@]}") >"$log" 2>&1; then
         nr_error "Image assembly failed at the '${xtask_cmd[*]}' stage. Last lines:"
         tail -5 "$log" | sed 's/^/    /'
@@ -78,6 +83,7 @@ nr_build_image() {
     nr_section "IMAGE READY"
     nr_kv "Target"        "$NR_TARGET_LABEL"
     nr_kv "Model"         "$NR_MODEL_NAME"
+    nr_kv "Stacks"        "$(nr_stack_label)"
     nr_kv "Image file"    "$image"
     nr_kv "Image size"    "$(nr_human_bytes "$NR_IMAGE_BYTES")"
     nr_kv "SHA-256"       "${NR_IMAGE_SHA:0:16}…"

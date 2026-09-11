@@ -55,6 +55,8 @@ pub struct Platform {
     pub pp_milli: u32,
     pub ftl_ms: u32,
     pub assistant: &'static str,
+    #[cfg(feature = "network")]
+    pub network: Option<crate::network::Network>,
 }
 
 pub fn run(display: Display) {
@@ -317,6 +319,8 @@ fn boot_sequence(
         pp_milli: 0,
         ftl_ms: 0,
         assistant: model.meta.arch.assistant_label(),
+        #[cfg(feature = "network")]
+        network: crate::network::Network::init(),
     }
 }
 
@@ -336,10 +340,14 @@ fn conventional_ram_mb() -> u32 {
 }
 
 fn intro_turn(model_name: &str) -> Turn {
+    #[cfg(feature = "mcp")]
+    let network_help = " · /mcp-list and /mcp-call use the trusted gateway";
+    #[cfg(not(feature = "mcp"))]
+    let network_help = "";
     Turn {
         role: Role::System,
         text: alloc::format!(
-            "{model_name} · resident in RAM · fully local, no OS underneath. Type a prompt;\nESC stops generation · UP/DOWN scroll history · /clear new conversation · /bye shut down"
+            "{model_name} · resident in RAM · fully local, no OS underneath. Type a prompt;\nESC stops generation · UP/DOWN scroll history · /clear new conversation · /bye shut down{network_help}"
         ),
     }
 }
@@ -356,6 +364,21 @@ fn chat_loop(p: &mut Platform, surf: &mut nr_gfx::Surface) {
     let page = nr_ui::chat::page_lines(surf, &p.fonts);
 
     loop {
+        #[cfg(feature = "mcp")]
+        if let Some(rate) = service_mcp(
+            p,
+            surf,
+            &mut turns,
+            &mut conversation_started,
+            frame,
+            last_rate,
+        ) {
+            last_rate = rate;
+        }
+        #[cfg(all(feature = "network", not(feature = "mcp")))]
+        if let Some(network) = p.network.as_mut() {
+            network.poll();
+        }
         let mut dirty = false;
         while let Some(ev) = input::poll() {
             dirty = true;
@@ -422,6 +445,23 @@ fn chat_loop(p: &mut Platform, surf: &mut nr_gfx::Surface) {
                                 None,
                             );
                         }
+                        #[cfg(feature = "mcp")]
+                        "/mcp-list" => {
+                            queue_mcp_request(
+                                p,
+                                serde_json::json!({
+                                    "jsonrpc": "2.0",
+                                    "id": frame,
+                                    "method": "tools/list",
+                                    "params": {}
+                                }),
+                                &mut turns,
+                            );
+                        }
+                        #[cfg(feature = "mcp")]
+                        cmd if cmd.starts_with("/mcp-call ") => {
+                            queue_mcp_call(p, cmd, frame, &mut turns);
+                        }
                         cmd if cmd.starts_with('/') => {
                             turns.push(Turn {
                                 role: Role::System,
@@ -463,6 +503,230 @@ fn chat_loop(p: &mut Platform, surf: &mut nr_gfx::Surface) {
         frame = frame.wrapping_add(1);
         stall_us(16_000);
     }
+}
+
+#[cfg(feature = "mcp")]
+fn service_mcp(
+    p: &mut Platform,
+    surf: &mut nr_gfx::Surface,
+    turns: &mut Vec<Turn>,
+    conversation_started: &mut bool,
+    frame: u32,
+    last_rate: u32,
+) -> Option<u32> {
+    let message = p.network.as_mut()?.poll_mcp()?;
+    match message.kind {
+        nr_mcp::Kind::HostRequest => {
+            let (response, rate) =
+                handle_inbound_mcp(p, surf, turns, conversation_started, frame, &message.json);
+            if let Some(response) = response {
+                if let Some(network) = p.network.as_mut() {
+                    network.queue_response(message.message_id, response);
+                }
+            }
+            Some(rate.unwrap_or(last_rate))
+        }
+        nr_mcp::Kind::HostResponse => {
+            let text = serde_json::from_slice::<serde_json::Value>(&message.json)
+                .ok()
+                .and_then(|value| serde_json::to_string_pretty(&value).ok())
+                .unwrap_or_else(|| String::from_utf8_lossy(&message.json).into_owned());
+            turns.push(Turn {
+                role: Role::System,
+                text: alloc::format!("MCP response:\n{text}"),
+            });
+            Some(last_rate)
+        }
+        _ => Some(last_rate),
+    }
+}
+
+#[cfg(feature = "mcp")]
+fn handle_inbound_mcp(
+    p: &mut Platform,
+    surf: &mut nr_gfx::Surface,
+    turns: &mut Vec<Turn>,
+    conversation_started: &mut bool,
+    frame: u32,
+    bytes: &[u8],
+) -> (Option<Vec<u8>>, Option<u32>) {
+    use serde_json::{json, Value};
+
+    let request: Value = match serde_json::from_slice(bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            return (
+                Some(
+                    serde_json::to_vec(&json!({
+                        "jsonrpc": "2.0",
+                        "id": null,
+                        "error": { "code": -32700, "message": "Parse error" }
+                    }))
+                    .unwrap(),
+                ),
+                None,
+            );
+        }
+    };
+    let Some(id) = request.get("id").cloned() else {
+        // Notifications intentionally have no JSON-RPC response.
+        return (None, None);
+    };
+    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    let result = match method {
+        "initialize" => Ok(json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": { "tools": {} },
+            "serverInfo": {
+                "name": "nightrun",
+                "title": "NightRun bare-metal LLM",
+                "version": crate::VERSION
+            },
+            "instructions": "Tools run on the local NightRun model. nightrun_prompt changes the visible conversation."
+        })),
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({
+            "tools": [
+                {
+                    "name": "nightrun_status",
+                    "title": "NightRun Status",
+                    "description": "Report the resident model, memory, CPU cores, and context usage.",
+                    "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+                },
+                {
+                    "name": "nightrun_prompt",
+                    "title": "Prompt NightRun",
+                    "description": "Send a prompt to the local bare-metal language model. This changes the visible conversation.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": { "prompt": { "type": "string", "minLength": 1, "maxLength": MAX_PROMPT_CHARS } },
+                        "required": ["prompt"],
+                        "additionalProperties": false
+                    }
+                }
+            ]
+        })),
+        "tools/call" => {
+            let params = request.get("params").unwrap_or(&Value::Null);
+            match params.get("name").and_then(Value::as_str) {
+                Some("nightrun_status") => Ok(json!({
+                    "content": [{
+                        "type": "text",
+                        "text": alloc::format!(
+                            "model={} cores={} ram={}MB context={}/{}",
+                            p.model_name,
+                            p.cores,
+                            p.ram_mb,
+                            p.infer.pos,
+                            p.infer.dims.ctx
+                        )
+                    }],
+                    "isError": false
+                })),
+                Some("nightrun_prompt") => {
+                    let prompt = params
+                        .get("arguments")
+                        .and_then(|args| args.get("prompt"))
+                        .and_then(Value::as_str);
+                    match prompt {
+                        Some(prompt)
+                            if !prompt.is_empty() && prompt.chars().count() <= MAX_PROMPT_CHARS =>
+                        {
+                            turns.push(Turn {
+                                role: Role::User,
+                                text: String::from(prompt),
+                            });
+                            let rate =
+                                generate(p, surf, prompt, turns, conversation_started, frame);
+                            let answer = turns
+                                .last()
+                                .map(|turn| turn.text.clone())
+                                .unwrap_or_default();
+                            return (
+                                Some(
+                                    serde_json::to_vec(&json!({
+                                        "jsonrpc": "2.0",
+                                        "id": id,
+                                        "result": {
+                                            "content": [{ "type": "text", "text": answer }],
+                                            "isError": false
+                                        }
+                                    }))
+                                    .unwrap(),
+                                ),
+                                Some(rate),
+                            );
+                        }
+                        _ => Err((-32602, "nightrun_prompt requires a non-empty prompt")),
+                    }
+                }
+                Some(_) => Err((-32602, "Unknown tool")),
+                None => Err((-32602, "tools/call requires a tool name")),
+            }
+        }
+        _ => Err((-32601, "Method not found")),
+    };
+    let response = match result {
+        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
+        Err((code, message)) => {
+            json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
+        }
+    };
+    (Some(serde_json::to_vec(&response).unwrap()), None)
+}
+
+#[cfg(feature = "mcp")]
+fn queue_mcp_request(p: &mut Platform, request: serde_json::Value, turns: &mut Vec<Turn>) {
+    if let Some(network) = p.network.as_mut() {
+        network.queue_upstream_request(serde_json::to_vec(&request).unwrap());
+        turns.push(Turn {
+            role: Role::System,
+            text: String::from("MCP request queued through the trusted gateway."),
+        });
+    } else {
+        turns.push(Turn {
+            role: Role::System,
+            text: String::from("MCP unavailable: no firmware network adapter."),
+        });
+    }
+}
+
+#[cfg(feature = "mcp")]
+fn queue_mcp_call(p: &mut Platform, command: &str, id: u32, turns: &mut Vec<Turn>) {
+    use serde_json::{json, Value};
+
+    let mut parts = command.splitn(3, ' ');
+    let _ = parts.next();
+    let Some(name) = parts.next().filter(|name| !name.is_empty()) else {
+        turns.push(Turn {
+            role: Role::System,
+            text: String::from("usage: /mcp-call TOOL {JSON arguments}"),
+        });
+        return;
+    };
+    let arguments = match parts.next() {
+        Some(text) => match serde_json::from_str::<Value>(text) {
+            Ok(Value::Object(map)) => Value::Object(map),
+            _ => {
+                turns.push(Turn {
+                    role: Role::System,
+                    text: String::from("MCP arguments must be one JSON object."),
+                });
+                return;
+            }
+        },
+        None => json!({}),
+    };
+    queue_mcp_request(
+        p,
+        json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": arguments }
+        }),
+        turns,
+    );
 }
 
 /// Run one user turn through the model, streaming tokens to the screen.

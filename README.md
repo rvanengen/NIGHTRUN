@@ -16,8 +16,8 @@ This is weird software. It boots straight into an LLM.
 
 There is no Linux userspace hiding underneath. Your machine's firmware starts NightRun
 directly, NightRun copies a quantized model into RAM, draws its own terminal on the
-framebuffer, and you chat. No kernel, no browser, no network stack, no host process.
-The machine does exactly one thing.
+framebuffer, and you chat. No kernel, no browser, no host process. The default build is
+offline; an experimental, opt-in network stack is available for firmware-network work.
 
 Written in Rust. `no_std` where it counts. Runs on ordinary x86_64 PCs from a USB stick
 and on a Raspberry Pi 5 from an SD card.
@@ -34,14 +34,15 @@ and on a Raspberry Pi 5 from an SD card.
 ## Quick start
 
 ```sh
-git clone https://github.com/hardrave/NIGHTRUN.git
+git clone https://github.com/rvanengen/NIGHTRUN.git
 cd NIGHTRUN
 less install.sh      # read what you are about to run
 ./install.sh
 ```
 
-The installer walks you through target choice (x86_64 USB or Pi 5 SD), model selection,
-a verified download (pinned revision, SHA-256), image build, and flashing.
+The installer walks you through target choice (x86_64 USB or Pi 5 SD), target RAM,
+memory-compatible model selection, optional network/MCP checkboxes, a verified download
+(pinned revision, SHA-256), image build, and flashing.
 
 > **Warning.** The installer flashes removable media. It refuses system disks, lists only
 > removable whole-disk devices, and demands you type `FLASH /dev/sdX` verbatim before
@@ -86,12 +87,21 @@ supported model family, on every change. Tokenizers are tested against fixtures 
 from the official Hugging Face tokenizers, chat templates against `apply_chat_template`.
 If a kernel change breaks parity, the kernel is wrong. That rule has caught real bugs.
 
+**Networking (experimental, opt-in).** `nr-net` provides an allocation-free
+Ethernet/ARP/IPv4/ICMP/UDP stack with a fixed neighbor cache and checked wire parsing.
+The `nr-boot` `network` feature connects it to UEFI's Simple Network Protocol; see the
+[network-stack notes](docs/network.md). The separate `mcp` feature and a
+bearer-authenticated host gateway add bidirectional MCP Streamable HTTP for inbound
+prompts/status and outbound tool calls; see [the MCP guide](docs/mcp.md). Normal image
+builds do not enable either stack.
+
 ## Supported targets
 
 | Target | Status | Boot media | Notes |
 |---|---|---|---|
 | x86_64 UEFI | supported | USB | any 64-bit UEFI machine, Secure Boot off; validated in QEMU/OVMF; real-machine firmware quirks vary, boot reports welcome |
 | Raspberry Pi 5 | supported | microSD | validated on a real D0-stepping 8 GB board; UEFI firmware built from pinned source |
+| Apple Silicon macOS | host mode | none | `nrhost` runs the same ARM64/NEON inference engine; native Mac boot is a separate future port; see [Apple Silicon](docs/apple-silicon.md) |
 | Legacy BIOS | not supported | | UEFI only |
 
 ## Supported models
@@ -193,6 +203,7 @@ cargo run --release -p nrconvert -- \
 # 3. Build a bootable image
 cargo xtask image --model models/model.nrm        # x86_64 -> nightrun.img
 cargo xtask pi-image --model models/model.nrm     # Pi 5   -> nightrun-pi5.img
+# Add --network for the UDP stack alone, or --mcp for network + MCP.
 #    (the Pi image needs firmware built once from pinned source:
 #     scripts/build-rpi5-firmware.sh; see docs/rpi5-uefi.md)
 

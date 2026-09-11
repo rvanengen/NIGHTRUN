@@ -11,7 +11,8 @@ static CACHED: AtomicU8 = AtomicU8::new(0);
 const PROBED: u8 = 1;
 const F_A: u8 = 2; // x86: AVX2   | aarch64: dotprod
 const F_B: u8 = 4; // x86: FMA    | aarch64: fp16 arith
-const F_C: u8 = 8; // x86: F16C   | aarch64: (unused)
+#[cfg(target_arch = "x86_64")]
+const F_C: u8 = 8; // x86: F16C
 
 fn cached_bits() -> u8 {
     let mut bits = CACHED.load(Ordering::Relaxed);
@@ -137,23 +138,40 @@ mod imp {
 
     pub(super) fn probe() -> u8 {
         let mut bits = PROBED;
-        // ID_AA64ISAR0_EL1.DP (bits 47:44) => FEAT_DotProd.
-        let isar0: u64;
-        unsafe {
-            core::arch::asm!("mrs {}, ID_AA64ISAR0_EL1", out(reg) isar0, options(nostack, nomem))
-        };
-        if (isar0 >> 44) & 0xf >= 1 {
-            bits |= F_A;
+        // Host OSes virtualize or restrict ID registers differently. Rust's
+        // standard-library detector uses the platform-supported mechanism
+        // (including Darwin's sysctl path), so use it whenever std exists.
+        #[cfg(feature = "std")]
+        {
+            if std::arch::is_aarch64_feature_detected!("dotprod") {
+                bits |= F_A;
+            }
+            if std::arch::is_aarch64_feature_detected!("fp16") {
+                bits |= F_B;
+            }
+            return bits;
         }
-        // ID_AA64PFR0_EL1.FP (bits 19:16) == 1 => FEAT_FP16 arithmetic.
-        let pfr0: u64;
-        unsafe {
-            core::arch::asm!("mrs {}, ID_AA64PFR0_EL1", out(reg) pfr0, options(nostack, nomem))
-        };
-        if (pfr0 >> 16) & 0xf == 1 {
-            bits |= F_B;
+
+        #[cfg(not(feature = "std"))]
+        {
+            // ID_AA64ISAR0_EL1.DP (bits 47:44) => FEAT_DotProd.
+            let isar0: u64;
+            unsafe {
+                core::arch::asm!("mrs {}, ID_AA64ISAR0_EL1", out(reg) isar0, options(nostack, nomem))
+            };
+            if (isar0 >> 44) & 0xf >= 1 {
+                bits |= F_A;
+            }
+            // ID_AA64PFR0_EL1.FP (bits 19:16) == 1 => FEAT_FP16 arithmetic.
+            let pfr0: u64;
+            unsafe {
+                core::arch::asm!("mrs {}, ID_AA64PFR0_EL1", out(reg) pfr0, options(nostack, nomem))
+            };
+            if (pfr0 >> 16) & 0xf == 1 {
+                bits |= F_B;
+            }
+            bits
         }
-        bits
     }
 }
 

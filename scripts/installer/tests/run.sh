@@ -40,6 +40,8 @@ source "$LIB/safety.sh"
 source "$LIB/ui.sh"
 # shellcheck source=../lib/models.sh
 source "$LIB/models.sh"
+# shellcheck source=../lib/features.sh
+source "$LIB/features.sh"
 # shellcheck source=../lib/media.sh
 source "$LIB/media.sh"
 
@@ -87,6 +89,19 @@ t "filter: llama supports rpi5"    nr_model_supports llama-1b rpi5
 t "filter: qwen matches rpi5 base" nr_model_supports qwen3-4b rpi5
 t "filter: qwen rpi5 has 8gb note" eq "$(nr_model_target_note qwen3-4b rpi5)" "8gb"
 t "filter: granite x86 no note"    eq "$(nr_model_target_note granite-3b x86_64)" ""
+t "memory: 4 GB fits llama 1B"     nr_model_fits_memory llama-1b 4
+t "memory: 6 GB rejects qwen 4B"   not nr_model_fits_memory qwen3-4b 6
+t "memory: 8 GB fits qwen 4B"      nr_model_fits_memory qwen3-4b 8
+t "memory: 6 GB recommends granite" eq "$(nr_recommended_model x86_64 6)" "granite-3b"
+t "memory: nonnumeric rejected"    not nr_model_fits_memory llama-1b nope
+
+# Build-mode invariants behind the checkbox UI.
+NR_ENABLE_NETWORK=0 NR_ENABLE_MCP=0
+t "features: default label offline" eq "$(nr_stack_label)" "offline"
+NR_ENABLE_NETWORK=1 NR_ENABLE_MCP=0
+t "features: network-only label" eq "$(nr_stack_label)" "network only"
+NR_ENABLE_NETWORK=1 NR_ENABLE_MCP=1
+t "features: MCP label" eq "$(nr_stack_label)" "network + MCP"
 
 # ---- path validation -----------------------------------------------------
 

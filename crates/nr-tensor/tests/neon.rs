@@ -150,6 +150,9 @@ fn neon_q6k_bit_equals_scalar() {
 /// exactly, regardless of which one the CPU probe would pick.
 #[test]
 fn neon_sdot_and_baseline_paths_identical() {
+    if !nr_tensor::cpu::features().dotprod {
+        return;
+    }
     let mut rng = Rng(61);
     let blocks = 6;
     let w8 = q8(&rng.adversarial(blocks * QK8_0));

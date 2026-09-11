@@ -5,11 +5,14 @@ members = [
     "crates/nr-gfx",
     "crates/nr-runtime",
     "crates/nr-model",
+    "crates/nr-mcp",
+    "crates/nr-net",
     "crates/nr-tensor",
     "crates/nr-token",
     "crates/nr-ui",
     "tools/nrconvert",
     "tools/nrhost",
+    "tools/nrmcp-gateway",
     "tools/xtask",
 ]
 # nr-boot only builds for x86_64-unknown-uefi; xtask drives that build.
@@ -17,11 +20,14 @@ default-members = [
     "crates/nr-gfx",
     "crates/nr-runtime",
     "crates/nr-model",
+    "crates/nr-mcp",
+    "crates/nr-net",
     "crates/nr-tensor",
     "crates/nr-token",
     "crates/nr-ui",
     "tools/nrconvert",
     "tools/nrhost",
+    "tools/nrmcp-gateway",
     "tools/xtask",
 ]
 

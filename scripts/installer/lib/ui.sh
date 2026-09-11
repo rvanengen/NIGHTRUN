@@ -66,6 +66,16 @@ nr_item() {
     fi
 }
 
+# Checkbox menu item: nr_checkbox <0|1> "1" "Network stack" "detail".
+nr_checkbox() {
+    local mark=" "
+    (( $1 )) && mark="x"
+    printf '  %s[%s]%s %s[%s] %s%s\n' "$C_CYN" "$2" "$C_OFF" "$C_TXT" "$mark" "$3" "$C_OFF"
+    if [[ -n "${4:-}" ]]; then
+        printf '          %s%s%s\n' "$C_DIM" "$4" "$C_OFF"
+    fi
+}
+
 # Prompt for a single choice. Args: prompt text. Reads into REPLY.
 nr_ask() {
     printf '\n%s%s%s ' "$C_ORG" "$1" "$C_OFF"

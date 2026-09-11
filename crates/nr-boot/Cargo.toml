@@ -4,11 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "nr-boot"
+path = "src/main.rs"
+test = false
+bench = false
+
+[features]
+default = []
+network = ["dep:nr-net"]
+mcp = ["network", "dep:nr-mcp", "dep:serde_json"]
+
 [dependencies]
 uefi = { version = "0.38", features = ["alloc", "global_allocator"] }
 nr-gfx = { path = "../nr-gfx" }
 nr-model = { path = "../nr-model", default-features = false }
+nr-mcp = { path = "../nr-mcp", default-features = false, optional = true }
+nr-net = { path = "../nr-net", default-features = false, optional = true }
 nr-runtime = { path = "../nr-runtime" }
 nr-tensor = { path = "../nr-tensor", default-features = false }
 nr-token = { path = "../nr-token", default-features = false }
 nr-ui = { path = "../nr-ui" }
+serde_json = { version = "1", default-features = false, features = ["alloc"], optional = true }

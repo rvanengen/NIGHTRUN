@@ -12,6 +12,8 @@ mod app;
 mod fan;
 mod input;
 mod modelload;
+#[cfg(feature = "network")]
+mod network;
 mod smp;
 mod video;
 

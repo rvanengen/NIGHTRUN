@@ -34,6 +34,16 @@ runtime:
 Everything else is NightRun's own code: rendering, fonts, memory management,
 tokenization, tensor math, sampling, the UI.
 
+An experimental exception is available behind the disabled-by-default
+`nr-boot/network` feature. It uses firmware's Simple Network Protocol only as an
+Ethernet device adapter; Ethernet, ARP, IPv4, ICMP, and UDP are implemented by the
+allocation-free `nr-net` crate. See [network.md](network.md). The normal build does not
+open a NIC and retains the offline behavior described here.
+
+The separate `nr-boot/mcp` feature implies `network` and adds bounded NRMP framing plus
+the MCP application layer. HTTP, TLS, authentication and remote MCP sessions remain in
+the host gateway rather than the firmware binary; see [mcp.md](mcp.md).
+
 Why not exit boot services? After `ExitBootServices` a USB keyboard requires a full
 XHCI host-controller driver, and PS/2 emulation is unreliable on modern firmware.
 Staying resident trades a purist badge for something that actually boots and takes

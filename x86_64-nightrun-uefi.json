@@ -43,7 +43,6 @@
       "/subsystem:efi_application"
     ]
   },
-  "rustc-abi": "softfloat",
   "singlethread": true,
   "split-debuginfo": "packed",
   "stack-probes": {
